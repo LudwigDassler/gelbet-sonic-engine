@@ -7,6 +7,8 @@ from bs4 import BeautifulSoup
 import io
 import re
 import urllib.parse
+import tempfile
+import os
 
 app = FastAPI(title="GELBET Sonic Engine", version="1.0.0")
 
@@ -72,9 +74,16 @@ def analyze_hypertext(lyrics: str):
 
     return {"entropy": entropy, "vowel_darkness": vowel_darkness, "syllabic_density": syllabic_density}
 
+# 🔥 ИСПРАВЛЕНА РАБОТА С ПАМЯТЬЮ (ФИЗИЧЕСКИЙ ФАЙЛ ДЛЯ FFMPEG) 🔥
 def analyze_acoustic_physics(audio_bytes: bytes):
+    # Создаем временный файл на диске сервера
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".m4a") as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
+
     try:
-        y, sr = librosa.load(io.BytesIO(audio_bytes), sr=22050, duration=30.0)
+        # Librosa (и ffmpeg под капотом) спокойно читает физический файл
+        y, sr = librosa.load(tmp_path, sr=22050, duration=30.0)
         
         centroid = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
         brightness = np.clip(np.mean(centroid) / 3000.0, 0.0, 1.0)
@@ -92,9 +101,15 @@ def analyze_acoustic_physics(audio_bytes: bytes):
         pink_noise = np.clip(np.mean(rolloff) / 8000.0, 0.0, 1.0)
 
         return {"brightness": brightness, "dynamics": dynamics, "gilmour_peak": gilmour_peak, "numbness": numbness, "pink_noise": pink_noise}
+    
     except Exception as e:
         print(f"[ACOUSTIC ERROR] {e}")
         return {"brightness": 0.5, "dynamics": 0.5, "gilmour_peak": 0.5, "numbness": 0.5, "pink_noise": 0.5}
+    
+    finally:
+        # ОБЯЗАТЕЛЬНО удаляем временный файл, чтобы не устроить утечку дисковой памяти
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 def translate_to_visual_tensor(acoustic: dict, text_math: dict, genre: str):
     tensor = np.zeros(32)
